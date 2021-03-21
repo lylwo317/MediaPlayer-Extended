@@ -314,8 +314,13 @@ class AudioPlayback {
         return (long)((double)(mPlaybackBufferSize / mFrameSize) / mSampleRate * 1000000d);
     }
 
+    /**
+     * 计算自flush stop reloadStaticData后播放了多久的音频
+     * @return
+     */
     private long getPlaybackheadPositionUs() {
         // The playback head position is encoded as a uint in an int
+        //转为long。这里flush stop reloadStaticData后到现在已经播放的帧数
         long playbackHeadPosition = 0xFFFFFFFFL & mAudioTrack.getPlaybackHeadPosition();
         // Convert frames to time
         return (long)((double)playbackHeadPosition / mSampleRate * 1000000);
@@ -327,6 +332,7 @@ class AudioPlayback {
      * For this method to return a PTS, audio samples need to be written before ({@link #write(ByteBuffer, long)}.
      * @return the PTS at the playback head or PTS_NOT_SET if unknown
      */
+    //返回已经播放的时长
     public long getCurrentPresentationTimeUs() {
         // Return the PTS_NOT_SET flag when the PTS has not been initialized yet. At the start of
         // media playback, returning the playback head alone is reliable, but later on (e.g. after a
@@ -338,22 +344,27 @@ class AudioPlayback {
         long playbackHeadPositionUs = getPlaybackheadPositionUs();
 
         // Handle playback head wrapping
-        if(playbackHeadPositionUs < mLastPlaybackHeadPositionUs) {
+        if(playbackHeadPositionUs < mLastPlaybackHeadPositionUs) {//溢出回到0
             // playback head position has wrapped around it's 32bit uint value
             Log.d(TAG, "playback head has wrapped");
             // Add the full runtime to the PTS offset to advance it one playback head iteration
+            //说明走了一个uint32轮回
             mPresentationTimeOffsetUs += (long)((double)0xFFFFFFFF / mSampleRate * 1000000);
         }
         mLastPlaybackHeadPositionUs = playbackHeadPositionUs;
 
         // Return the playback head time, offset by the start offset PTS
-        return mPresentationTimeOffsetUs + playbackHeadPositionUs;
+        return mPresentationTimeOffsetUs + playbackHeadPositionUs;//startPts + duration = curPts
     }
 
     public long getLastPresentationTimeUs() {
         return mLastPresentationTimeUs;
     }
 
+    /**
+     * 这里倍速的方式不是很合适，会将声音变调
+     * @param speed
+     */
     public void setPlaybackSpeed(float speed) {
         if(isInitialized()) {
            mAudioTrack.setPlaybackRate((int)(mSampleRate * speed));
@@ -367,7 +378,7 @@ class AudioPlayback {
     }
 
     private void writeToPlaybackBuffer(ByteBuffer audioData, long presentationTimeUs) {
-        int size = audioData.remaining();
+        int size = audioData.remaining();//剩余的
         if(mTransferBuffer == null || mTransferBuffer.length < size) {
             mTransferBuffer = new byte[size];
         }
@@ -457,7 +468,7 @@ class AudioPlayback {
                     }
 
                     writeToPlaybackBuffer(bufferItem.buffer, bufferItem.presentationTimeUs);
-                    mBufferQueue.put(bufferItem);
+                    mBufferQueue.put(bufferItem);//回收
                 } catch (InterruptedException e) {
                     interrupt();
                 }

@@ -366,7 +366,7 @@ public class MediaPlayer {
                 // entered when playback is started and buffer is too empty).
                 if(mPlaybackThread != null && !mPlaybackThread.isPaused()
                         && !mBuffering
-                        && mDecoders.getCachedDuration() < BUFFER_LOW_WATER_MARK_US
+                        && mDecoders.getCachedDuration() < BUFFER_LOW_WATER_MARK_US//缓冲数据小于2s，就进行缓冲
                         && !mDecoders.hasCacheReachedEndOfStream()) {
                     mBuffering = true;
                     mEventHandler.sendMessage(mEventHandler.obtainMessage(MEDIA_INFO,
@@ -1054,7 +1054,7 @@ public class MediaPlayer {
                     case PLAYBACK_PREPARE:
                         prepareInternal();
                         return true;
-                    case PLAYBACK_PLAY:
+                    case PLAYBACK_PLAY://启动播放器，并开启解码loop
                         playInternal();
                         return true;
                     case PLAYBACK_PAUSE:
@@ -1155,11 +1155,13 @@ public class MediaPlayer {
             mHandler.removeMessages(PLAYBACK_LOOP); // removes remaining loop requests (required when EOS is reached)
             if (mAudioPlayback != null) {
                 if(drainAudioPlayback) {
+                    //等待音频缓存播完再暂停AudioTrack
                     // Defer pausing the audio playback for the length of the playback buffer, to
                     // make sure that all audio samples have been played out.
                     mHandler.sendEmptyMessageDelayed(PLAYBACK_PAUSE_AUDIO,
                             (mAudioPlayback.getQueueBufferTimeUs() + mAudioPlayback.getPlaybackBufferTimeUs()) / 1000 + 1);
                 } else {
+                    //暂停时候不需要清空AudioTrack缓冲区
                     mAudioPlayback.pause(false);
                 }
             }
@@ -1211,6 +1213,7 @@ public class MediaPlayer {
             if(mDecoders.getVideoDecoder() != null && mVideoFrameInfo == null) {
                 // This method needs a video frame to operate on. If there is no frame, we need
                 // to decode one first.
+                //解码一帧
                 mVideoFrameInfo = mDecoders.decodeFrame(false);
                 if(mVideoFrameInfo == null && !mDecoders.isEOS()) {
                     // If the decoder didn't return a frame, we need to give it some processing time
@@ -1239,6 +1242,7 @@ public class MediaPlayer {
             // On API < 21 the frame rendering is timed with a sleep() and this is not really necessary,
             // but still shifts some waiting time from the sleep() to here.
             if(mVideoFrameInfo != null && mTimeBase.getOffsetFrom(mVideoFrameInfo.presentationTimeUs) > 60000) {
+                //>60ms，让loop等待一下，避免loop过快
                 mHandler.sendEmptyMessageDelayed(PLAYBACK_LOOP, 50);
                 return;
             }
@@ -1248,6 +1252,7 @@ public class MediaPlayer {
 
             // fire cue events
             // Rate limited to 10 Hz (every 100ms)
+            // 消费 cue 事件。两个cue相隔至少100ms
             if (mCueTimeline.count() > 0 && startTime - mLastCueEventTime > 100) {
                 mLastCueEventTime = startTime;
                 mCueTimeline.movePlaybackPosition((int) (mCurrentPosition / 1000),
@@ -1276,7 +1281,9 @@ public class MediaPlayer {
 
                 // Sync timebase to audio timebase when there is audio data available
                 long currentAudioPTS = mAudioPlayback.getCurrentPresentationTimeUs();
+                //说明有音频数据
                 if(currentAudioPTS > AudioPlayback.PTS_NOT_SET) {
+                    //重新校准时间基
                     mTimeBase.startAt(currentAudioPTS);
                 }
             }
@@ -1287,10 +1294,12 @@ public class MediaPlayer {
 
                 // If looping is on, seek back to the start...
                 if(mLooping) {
+                    //开启了循环播放
                     if(mAudioPlayback != null) {
                         // Flush audio buffer to reset audio PTS
                         mAudioPlayback.flush();
                     }
+                    //seek到第一帧，重新播放
                     mDecoders.seekTo(SeekMode.FAST_TO_PREVIOUS_SYNC, 0);
                     mCueTimeline.setPlaybackPosition(0);
                     mDecoders.renderFrames();
@@ -1328,6 +1337,7 @@ public class MediaPlayer {
         private void seekInternal(long usec) throws IOException, InterruptedException {
             if(mVideoFrameInfo != null) {
                 // A decoded video frame is waiting to be rendered, dismiss it
+                //seek的时候丢弃视频帧
                 mDecoders.getVideoDecoder().dismissFrame(mVideoFrameInfo);
                 mVideoFrameInfo = null;
             }
@@ -1402,6 +1412,11 @@ public class MediaPlayer {
             }
         }
 
+        /**
+         * 音视频同步
+         * @param videoFrameInfo
+         * @throws InterruptedException
+         */
         private void renderVideoFrame(MediaCodecDecoder.FrameInfo videoFrameInfo) throws InterruptedException {
             if(videoFrameInfo.endOfStream) {
                 // The EOS frame does not contain a video frame, so we dismiss it
@@ -1412,12 +1427,14 @@ public class MediaPlayer {
             // Calculate waiting time until the next frame's PTS
             // The waiting time might be much higher that a frame's duration because timed API21
             // rendering caches multiple released output frames before actually rendering them.
+            //在Api21的时候，这个时间会比一帧显示的时间还要长。因为这里是多个帧去渲染，只要指定offetTs就可以了。
+            //但是在Api21之前，这里是一帧渲染完之后才到下一帧
             long waitingTime = mTimeBase.getOffsetFrom(videoFrameInfo.presentationTimeUs);
 //            Log.d(TAG, "VPTS " + mCurrentPosition
 //                    + " APTS " + mAudioPlayback.getCurrentPresentationTimeUs()
 //                    + " waitingTime " + waitingTime);
 
-            if (waitingTime < -1000) {
+            if (waitingTime < -1000) {//延迟超过1ms。说明解码速度跟不上播放的速度，比如高倍速播放的时候
                 // we need to catch up time by skipping rendering of this frame
                 // this doesn't gain enough time if playback speed is too high and decoder at full load
                 // TODO improve fast forward mode
@@ -1433,11 +1450,12 @@ public class MediaPlayer {
             }
 
             // Slow down playback, if necessary, to keep frame rate
-            if(!mRenderModeApi21 && waitingTime > 5000) {
+            if(!mRenderModeApi21 && waitingTime > 5000) {//>5ms，并且不是Api21，就sleep到指定时间再播放
                 // Sleep until it's time to render the next frame
                 // This is not v-synced to the display. Not required any more on API 21+.
                 Thread.sleep(waitingTime / 1000);
             }
+            //播放
             // Release the current frame and render it to the surface
             mDecoders.getVideoDecoder().renderFrame(videoFrameInfo, waitingTime);
         }

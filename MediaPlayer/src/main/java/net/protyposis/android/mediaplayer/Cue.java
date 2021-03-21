@@ -17,6 +17,7 @@
 package net.protyposis.android.mediaplayer;
 
 /**
+ * 在指定的time附近回调通知注册该cue的监听器
  * Created by Mario on 15.03.2018.
  */
 

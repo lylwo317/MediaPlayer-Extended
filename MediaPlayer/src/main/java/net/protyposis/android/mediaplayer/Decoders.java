@@ -77,17 +77,19 @@ class Decoders {
             MediaCodecDecoder.FrameInfo fi;
             MediaCodecDecoder.FrameInfo vfi = null;
 
-            for (MediaCodecDecoder decoder : mDecoders) {
+            for (MediaCodecDecoder decoder : mDecoders) {//遍历解码器
                 while((fi = decoder.dequeueDecodedFrame()) != null) {
 
                     if(decoder == mVideoDecoder) {
-                        vfi = fi;
+                        vfi = fi;//解码后视频数据并没有返回到上层，所以不需要write。这里就结束dequeue
                         break;
                     } else {
-                        decoder.renderFrame(fi, 0);
+                        decoder.renderFrame(fi, 0);//解码后的音频数据需要write到AudioTrack才能播放
                     }
                 }
 
+                //由于前面已经有出队的了。这里入队填满空出来的缓冲区
+                //将待解码数据输入到解码器输入缓存区
                 while (decoder.queueSampleToCodec(false)) {}
 
                 if(decoder.isOutputEos()) {
@@ -141,6 +143,9 @@ class Decoders {
         }
     }
 
+    /**
+     * 丢弃帧
+     */
     public void dismissFrames() {
         for (MediaCodecDecoder decoder : mDecoders) {
             decoder.dismissFrame();

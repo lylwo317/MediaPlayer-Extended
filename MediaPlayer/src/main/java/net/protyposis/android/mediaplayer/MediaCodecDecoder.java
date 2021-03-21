@@ -278,7 +278,7 @@ abstract class MediaCodecDecoder {
 
         boolean sampleQueued = false;
         int inputBufIndex = mCodec.dequeueInputBuffer(TIMEOUT_US);
-        if (inputBufIndex >= 0) {
+        if (inputBufIndex >= 0) {//有可用InputBuffer
             ByteBuffer inputBuffer = mCodecInputBuffers[inputBufIndex];
 
             if(mExtractor.hasTrackFormatChanged()) {
@@ -291,6 +291,7 @@ abstract class MediaCodecDecoder {
 
                 // Check buffering state before representation changes (and possibly a new segment needs to be downloaded)
                 if(mExtractor.getCachedDuration() > -1) {
+                    //如果是可以缓冲的，就检查是否需要缓冲
                     if(mOnDecoderEventListener != null) {
                         mOnDecoderEventListener.onBuffering(this);
                     }
@@ -298,6 +299,7 @@ abstract class MediaCodecDecoder {
             } else {
                 // Check buffering state before the blocking readSampleData call
                 if(mExtractor.getCachedDuration() > -1) {
+                    //如果是可以缓冲的，就检查是否需要缓冲
                     if(mOnDecoderEventListener != null) {
                         mOnDecoderEventListener.onBuffering(this);
                     }
@@ -326,6 +328,7 @@ abstract class MediaCodecDecoder {
                 //Log.d(TAG, "queued PTS " + presentationTimeUs);
 
                 if (!mInputEos) {
+                    //下一个需要解码的数据包
                     mExtractor.advance();
                 }
             }
@@ -345,7 +348,7 @@ abstract class MediaCodecDecoder {
         int res = mCodec.dequeueOutputBuffer(mBufferInfo, TIMEOUT_US);
         mOutputEos = res >= 0 && (mBufferInfo.flags & MediaCodec.BUFFER_FLAG_END_OF_STREAM) != 0;
 
-        if(mOutputEos && mRepresentationChanging) {
+        if(mOutputEos && mRepresentationChanging) {//需要重新创建解码器
             /* Here, the output is not really at its end, it's just the end of the
              * current representation segment, and the codec needs to be reconfigured to
              * the following representation format to carry on.
@@ -382,7 +385,7 @@ abstract class MediaCodecDecoder {
             if(fi.endOfStream) {
                 Log.d(TAG, "EOS output");
             } else {
-                mDecodingPTS = fi.presentationTimeUs;
+                mDecodingPTS = fi.presentationTimeUs;//最近解码的时间点
             }
 
             //Log.d(TAG, "decoded PTS " + fi.presentationTimeUs);
@@ -495,8 +498,8 @@ abstract class MediaCodecDecoder {
      * @param frameInfo information about a frame
      */
     protected final void releaseFrameInfo(FrameInfo frameInfo) {
-        frameInfo.clear();
-        mEmptyFrameInfos.add(frameInfo);
+        frameInfo.clear();//清空数据
+        mEmptyFrameInfos.add(frameInfo);//回收
     }
 
     /**
@@ -584,9 +587,11 @@ abstract class MediaCodecDecoder {
 
         mInputEos = false;
         mOutputEos = false;
+        //清空解码器缓存区
         codec.flush();
 
         if(extractor.hasTrackFormatChanged()) {
+            //格式变化，就重新创建解码器
             reinitCodec();
             mRepresentationChanged = true;
         }
